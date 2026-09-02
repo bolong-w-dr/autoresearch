@@ -1,0 +1,4 @@
+{
+  "name": "autoresearch",
+  "install": "bash .cursor/install.sh"
+}
