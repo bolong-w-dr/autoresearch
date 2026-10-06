@@ -1,5 +1,7 @@
 import { api, newRequestId } from "./lib/api.js";
 import { renderProgressChart } from "./lib/chart.js";
+import { agentTemplate, blankForm, formFromMission, hyperPlaceholders, missionFromForm } from "./lib/mission-form.js";
+import { collectHints, commandDocHtml, missionDocHtml } from "./lib/schema-doc.js";
 import { validate } from "./lib/validate.js";
 
 const cfg = window.AUTORESEARCH_CONFIG || {};
@@ -265,127 +267,370 @@ async function viewMission(id) {
   });
 }
 
+function fieldError(key) {
+  return `<p class="field-error" data-error-for="${esc(key)}" hidden></p>`;
+}
+
+function inputField({ id, label, hintKey, value, placeholder, required = false, wide = false }) {
+  return `<div class="field ${wide ? "field-wide" : ""}">
+    <label for="${id}">${esc(label)} ${required ? '<span class="req-mark">required</span>' : '<span class="opt-mark">optional</span>'}</label>
+    <input id="${id}" data-hint="${esc(hintKey)}" value="${esc(value)}" placeholder="${esc(placeholder)}" autocomplete="off" />
+    ${fieldError(id)}
+  </div>`;
+}
+
 async function viewNew() {
   setActiveNav("new");
   const schema = await ensureSchema();
-  const example = (schema.examples && schema.examples[0]) || {};
+  const hints = collectHints(schema);
+  const placeholders = hyperPlaceholders(schema);
+  const hyperKeys = schema["x-overridable-hyperparameters"] || Object.keys(placeholders);
+  let form;
   const draft = sessionStorage.getItem("autoresearch.draft");
-  const starter = draft || JSON.stringify({ ...example, mission_id: undefined, tag: `run-${new Date().toISOString().slice(5, 10).replace("-", "")}`, requested_by: undefined }, null, 2);
-  const overridable = schema["x-overridable-hyperparameters"] || [];
-
-  app.innerHTML = `
-    <div class="page-head"><h1>New mission</h1><span class="muted">Validated against <a href="#/schema">the mission schema</a>, then published as a <code>start_mission</code> command.</span></div>
-    <div class="grid two">
-      <div>
-        <div class="field"><label for="editor">Mission JSON</label><textarea id="editor" class="editor" spellcheck="false">${esc(starter)}</textarea></div>
-        <div class="btn-group">
-          <button class="btn btn-primary" id="submit">Start mission</button>
-          <button class="btn" id="validate">Validate</button>
-          <button class="btn" id="load-example">Load example</button>
-          <button class="btn" id="load-agent">Agent template</button>
-          <button class="btn" id="format">Format</button>
-        </div>
-        <div id="result" class="section"></div>
-      </div>
-      <div>
-        <div class="card">
-          <div class="label">Quick reference</div>
-          <p class="hint">Work happens on <code>autoresearch/&lt;tag&gt;</code>, so the tag must be new for this repo. <code>mission_id</code> and <code>requested_by</code> are filled in automatically when omitted.</p>
-          <p class="hint"><strong>sweep</strong> runs the planned experiments in order; kept changes accumulate. <strong>agent</strong> invokes a coding-agent CLI per iteration to propose a change to <code>train.py</code>.</p>
-          <div class="label" style="margin-top:12px">Overridable hyperparameters</div>
-          <div class="chips" style="margin-top:6px">${overridable.map((h) => `<span class="chip">${esc(h)}</span>`).join("")}</div>
-          <div class="label" style="margin-top:12px">Signed in as</div>
-          <div class="mono">${esc((state.me && state.me.user) || "unknown")}</div>
-        </div>
-      </div>
-    </div>`;
-
-  const editor = app.querySelector("#editor");
-  const result = app.querySelector("#result");
-  const parse = () => {
+  if (draft) {
     try {
-      return [JSON.parse(editor.value), null];
-    } catch (err) {
-      return [null, `Invalid JSON: ${err.message}`];
-    }
-  };
-  const showErrors = (errors) => {
-    result.innerHTML = `<div class="error-box"><strong>${errors.length} problem${errors.length === 1 ? "" : "s"}</strong><ul>${errors.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>`;
-  };
-  const doValidate = () => {
-    const [mission, err] = parse();
-    if (err) return showErrors([err]), null;
-    const errors = validate(schema, mission);
-    if (errors.length) return showErrors(errors), null;
-    result.innerHTML = '<div class="ok-box">Mission is valid.</div>';
-    return mission;
-  };
-
-  app.querySelector("#validate").addEventListener("click", doValidate);
-  app.querySelector("#format").addEventListener("click", () => { const [m, err] = parse(); if (err) showErrors([err]); else editor.value = JSON.stringify(m, null, 2); });
-  app.querySelector("#load-example").addEventListener("click", () => { editor.value = JSON.stringify({ ...example, mission_id: undefined, requested_by: undefined }, null, 2); result.innerHTML = ""; });
-  app.querySelector("#load-agent").addEventListener("click", () => {
-    editor.value = JSON.stringify({
-      name: "Overnight agent run",
-      tag: `agent-${new Date().toISOString().slice(5, 10).replace("-", "")}`,
-      objective: "Minimise val_bpb within the fixed 5-minute training budget.",
-      strategy: { type: "agent", command: ["claude", "-p", "Read the file {prompt_file} and follow its instructions.", "--dangerously-skip-permissions"], instructions: "Focus on optimizer and learning-rate schedule ideas first.", timeout_minutes: 20 },
-      budget: { max_experiments: 100, max_duration_minutes: 480, experiment_timeout_minutes: 10 },
-      tags: ["agent", "overnight"],
-    }, null, 2);
-    result.innerHTML = "";
-  });
-  app.querySelector("#submit").addEventListener("click", async () => {
-    const mission = doValidate();
-    if (!mission) return;
-    const btn = app.querySelector("#submit");
-    btn.disabled = true;
-    try {
-      const res = await sendCommand({ command: "start_mission", mission }, "start mission");
-      sessionStorage.removeItem("autoresearch.draft");
-      result.innerHTML = `<div class="ok-box">Command accepted (request <code>${esc(res.request_id || "")}</code>). The mission will appear on the <a href="#/">overview</a> once the service picks it up.</div>`;
+      form = formFromMission(JSON.parse(draft));
     } catch {
-      /* toast already shown */
-    } finally {
-      btn.disabled = false;
+      form = blankForm();
     }
-  });
-  if (draft) sessionStorage.removeItem("autoresearch.draft");
+    sessionStorage.removeItem("autoresearch.draft");
+  } else {
+    form = blankForm();
+  }
+  let showErrors = false;
+
+  const paint = () => {
+    app.innerHTML = `
+      <div class="page-head">
+        <h1>New mission</h1>
+        <span class="muted">Prefilled with a working sweep. Grey text is a placeholder. The panel shows the exact JSON sent to the service, checked against <a href="#/schema">the schema</a>.</span>
+      </div>
+      <form id="mission-form" class="grid two" autocomplete="off">
+        <div>
+          <section class="card form-section">
+            <h2>Mission</h2>
+            <div class="field-row">
+              ${inputField({ id: "name", label: "Name", hintKey: "name", value: form.name, placeholder: "LR and batch-size sweep", required: true })}
+              ${inputField({ id: "tag", label: "Tag", hintKey: "tag", value: form.tag, placeholder: "oct6-lr", required: true })}
+            </div>
+            <div class="field field-wide">
+              <label for="objective">Objective <span class="opt-mark">prefilled</span></label>
+              <textarea id="objective" data-hint="objective" rows="2" placeholder="Minimise val_bpb within the fixed 5-minute training budget.">${esc(form.objective)}</textarea>
+              ${fieldError("objective")}
+            </div>
+            <div class="field-row">
+              ${inputField({ id: "baseRef", label: "Branch from", hintKey: "base_ref", value: form.baseRef, placeholder: "master", required: true })}
+              ${inputField({ id: "tags", label: "Tags", hintKey: "tags", value: form.tags, placeholder: "sweep, overnight" })}
+            </div>
+          </section>
+
+          <section class="card form-section">
+            <h2>How experiments are proposed</h2>
+            <div class="segmented" role="radiogroup" aria-label="Strategy">
+              <label class="${form.strategy === "sweep" ? "on" : ""}"><input type="radio" name="strategy" value="sweep" ${form.strategy === "sweep" ? "checked" : ""} /> Sweep</label>
+              <label class="${form.strategy === "agent" ? "on" : ""}"><input type="radio" name="strategy" value="agent" ${form.strategy === "agent" ? "checked" : ""} /> Coding agent</label>
+            </div>
+            <p class="hint" id="strategy-hint"></p>
+            <div id="sweep-fields" ${form.strategy === "agent" ? "hidden" : ""}>
+              <div id="experiments"></div>
+              <button type="button" class="btn btn-sm" id="add-exp">Add experiment</button>
+              ${fieldError("experiments")}
+            </div>
+            <div id="agent-fields" ${form.strategy === "agent" ? "" : "hidden"}>
+              <div class="field">
+                <label for="command">Command <span class="req-mark">required</span></label>
+                <textarea id="command" data-hint="AgentStrategy.command" rows="4" placeholder="claude&#10;-p&#10;Read the file {prompt_file} and follow its instructions.">${esc(form.command)}</textarea>
+                <p class="hint">One argument per line. <code>{prompt_file}</code>, <code>{description_file}</code> and <code>{worktree}</code> are filled in by the service.</p>
+                ${fieldError("command")}
+              </div>
+              <div class="field">
+                <label for="instructions">Extra instructions <span class="opt-mark">optional</span></label>
+                <textarea id="instructions" data-hint="AgentStrategy.instructions" rows="3" placeholder="Focus on the learning-rate schedule before changing the architecture.">${esc(form.instructions)}</textarea>
+                ${fieldError("instructions")}
+              </div>
+              ${inputField({ id: "agentTimeout", label: "Agent timeout (minutes)", hintKey: "AgentStrategy.timeout_minutes", value: form.agentTimeout, placeholder: "20" })}
+            </div>
+          </section>
+
+          <section class="card form-section">
+            <h2>When to keep a result</h2>
+            <div class="field-row">
+              <div class="field">
+                <label for="direction">Direction</label>
+                <select id="direction" data-hint="KeepPolicy.direction">
+                  <option value="min" ${form.direction === "min" ? "selected" : ""}>min — lower val_bpb is better</option>
+                  <option value="max" ${form.direction === "max" ? "selected" : ""}>max — higher is better</option>
+                </select>
+              </div>
+              ${inputField({ id: "minImprovement", label: "Minimum improvement", hintKey: "KeepPolicy.min_improvement", value: form.minImprovement, placeholder: "0" })}
+              ${inputField({ id: "maxMemoryGb", label: "VRAM cap (GB)", hintKey: "KeepPolicy.max_memory_gb", value: form.maxMemoryGb, placeholder: "48" })}
+            </div>
+          </section>
+
+          <section class="card form-section">
+            <h2>When to stop</h2>
+            <div class="field-row">
+              ${inputField({ id: "maxExperiments", label: "Max experiments", hintKey: "Budget.max_experiments", value: form.maxExperiments, placeholder: "12", required: true })}
+              ${inputField({ id: "maxDuration", label: "Max duration (minutes)", hintKey: "Budget.max_duration_minutes", value: form.maxDuration, placeholder: "480" })}
+              ${inputField({ id: "experimentTimeout", label: "Per-run timeout (minutes)", hintKey: "Budget.experiment_timeout_minutes", value: form.experimentTimeout, placeholder: "10", required: true })}
+            </div>
+          </section>
+
+          <div class="btn-group">
+            <button type="submit" class="btn btn-primary" id="submit">Start mission</button>
+            <button type="button" class="btn" id="use-example">Load schema example</button>
+            <button type="button" class="btn" id="use-agent">Agent template</button>
+            <button type="button" class="btn" id="use-blank">Reset defaults</button>
+          </div>
+          <div id="result" class="section"></div>
+        </div>
+        <aside class="form-side">
+          <div class="card">
+            <div class="label">Schema for this field</div>
+            <div id="field-doc" class="field-doc"><p class="hint">Click a field. This shows its type, whether it is required, and an example from the published schema.</p></div>
+          </div>
+          <div class="card">
+            <div class="label">Command payload <button type="button" class="btn btn-sm" id="copy-payload">Copy</button></div>
+            <p id="payload-status" class="hint"></p>
+            <pre id="payload" class="log payload"></pre>
+          </div>
+          <p class="hint">Signed in as <span class="mono">${esc((state.me && state.me.user) || "unknown")}</span>. <code>requested_by</code> and <code>mission_id</code> are added when the command is sent.</p>
+        </aside>
+      </form>`;
+    renderExperiments();
+    bind();
+    refreshPayload();
+  };
+
+  function renderExperiments() {
+    const host = app.querySelector("#experiments");
+    if (!host) return;
+    host.innerHTML = form.experiments
+      .map((exp, i) => {
+        const rows = exp.overrides
+          .map((ov, j) => {
+            const opts = hyperKeys.map((h) => `<option value="${esc(h)}" ${h === ov.key ? "selected" : ""}>${esc(h)}</option>`).join("");
+            return `<div class="override-row">
+              <select data-ov="key" data-i="${i}" data-j="${j}" data-hint="overrides" aria-label="Hyperparameter">${opts}</select>
+              <input data-ov="value" data-i="${i}" data-j="${j}" data-hint="overrides" value="${esc(ov.value)}" placeholder="baseline ${esc(placeholders[ov.key] || "")}" aria-label="New value" />
+              <button type="button" class="btn btn-sm" data-remove-ov="${i}:${j}" ${exp.overrides.length === 1 ? "disabled" : ""} aria-label="Remove override">×</button>
+              ${fieldError(`exp-${i}-ov-${j}`)}
+            </div>`;
+          })
+          .join("");
+        return `<div class="exp-card" data-exp="${i}">
+          <div class="exp-head"><span>Experiment ${i + 1} <span class="muted">runs after the baseline</span></span>
+            <button type="button" class="btn btn-sm" data-remove-exp="${i}" ${form.experiments.length === 1 ? "disabled" : ""}>Remove</button></div>
+          <div class="field">
+            <label>Description <span class="req-mark">required</span></label>
+            <input data-exp-field="description" data-i="${i}" data-hint="SweepStrategy.experiments" value="${esc(exp.description)}" placeholder="increase MATRIX_LR to 0.05" />
+            ${fieldError(`exp-${i}-description`)}
+          </div>
+          <p class="hint">Overrides. The grey placeholder is the current <code>train.py</code> baseline.</p>
+          ${rows}
+          <button type="button" class="btn btn-sm" data-add-ov="${i}">Add override</button>
+        </div>`;
+      })
+      .join("");
+  }
+
+  function readForm() {
+    const val = (id) => (app.querySelector("#" + id) || {}).value ?? "";
+    const strategy = (app.querySelector('input[name="strategy"]:checked') || {}).value || form.strategy;
+    const experiments = [...app.querySelectorAll(".exp-card")].map((card) => ({
+      description: card.querySelector("[data-exp-field=description]").value,
+      overrides: [...card.querySelectorAll(".override-row")].map((row) => ({
+        key: row.querySelector("[data-ov=key]").value,
+        value: row.querySelector("[data-ov=value]").value,
+      })),
+    }));
+    return {
+      ...form,
+      name: val("name"),
+      tag: val("tag"),
+      objective: val("objective"),
+      baseRef: val("baseRef"),
+      tags: val("tags"),
+      strategy,
+      experiments: experiments.length ? experiments : form.experiments,
+      command: val("command"),
+      instructions: val("instructions"),
+      agentTimeout: val("agentTimeout"),
+      direction: val("direction"),
+      minImprovement: val("minImprovement"),
+      maxMemoryGb: val("maxMemoryGb"),
+      maxExperiments: val("maxExperiments"),
+      maxDuration: val("maxDuration"),
+      experimentTimeout: val("experimentTimeout"),
+    };
+  }
+
+  function applyErrors(errors) {
+    app.querySelectorAll("[data-error-for]").forEach((el) => {
+      const msg = showErrors ? errors[el.dataset.errorFor] : "";
+      el.hidden = !msg;
+      el.textContent = msg || "";
+    });
+  }
+
+  function refreshPayload() {
+    form = readForm();
+    const built = missionFromForm(form);
+    const schemaErrors = Object.keys(built.errors).length ? [] : validate(schema, built.mission);
+    const problems = Object.values(built.errors).concat(schemaErrors);
+    applyErrors(built.errors);
+    const pre = app.querySelector("#payload");
+    const status = app.querySelector("#payload-status");
+    if (pre) pre.textContent = JSON.stringify(built.mission, null, 2);
+    if (status) {
+      status.textContent = problems.length ? `${problems.length} to fix before this can start` : "Valid against the mission schema";
+      status.className = problems.length ? "hint bad-hint" : "hint good-hint";
+    }
+    const hint = app.querySelector("#strategy-hint");
+    if (hint) {
+      hint.textContent = form.strategy === "agent"
+        ? "Each iteration runs this command inside the mission worktree. The agent edits train.py; the service trains and keeps or discards."
+        : "Each experiment rewrites the constants you list, then trains for the fixed 5-minute budget. Kept changes carry into the next experiment.";
+    }
+    return problems.length ? null : built.mission;
+  }
+
+  function showFieldDoc(key) {
+    const doc = app.querySelector("#field-doc");
+    const hint = hints[key];
+    if (!doc) return;
+    if (!hint) {
+      doc.innerHTML = `<p class="hint">Pick a hyperparameter. Placeholder values are the current <code>train.py</code> baselines, so you can see what you are changing.</p><div class="chips">${hyperKeys.map((h) => `<span class="chip">${esc(h)} = ${esc(placeholders[h] || "")}</span>`).join("")}</div>`;
+      return;
+    }
+    doc.innerHTML = `<header><code>${esc(hint.name)}</code> ${hint.required ? '<span class="badge badge-paused">required</span>' : '<span class="badge badge-skipped">optional</span>'} <span class="type">${esc(hint.type)}</span></header>
+      <p>${esc(hint.description || "See the schema page for the full description.")}</p>
+      ${hint.example ? `<div class="doc-example"><span>example</span><code>${esc(hint.example)}</code></div>` : ""}`;
+  }
+
+  function bind() {
+    const formEl = app.querySelector("#mission-form");
+    formEl.addEventListener("input", (ev) => {
+      if (ev.target.matches("[data-ov=key]")) {
+        const row = ev.target.closest(".override-row");
+        const value = row.querySelector("[data-ov=value]");
+        value.placeholder = `baseline ${placeholders[ev.target.value] || ""}`;
+      }
+      refreshPayload();
+    });
+    formEl.addEventListener("focusin", (ev) => {
+      const key = ev.target.getAttribute && ev.target.getAttribute("data-hint");
+      if (key) showFieldDoc(key);
+    });
+    formEl.addEventListener("click", (ev) => {
+      const t = ev.target;
+      if (t.id === "add-exp") {
+        form = readForm();
+        form.experiments.push({ description: "", overrides: [{ key: "DEPTH", value: "" }] });
+        renderExperiments();
+        refreshPayload();
+      } else if (t.dataset.removeExp != null) {
+        form = readForm();
+        form.experiments.splice(Number(t.dataset.removeExp), 1);
+        renderExperiments();
+        refreshPayload();
+      } else if (t.dataset.addOv != null) {
+        form = readForm();
+        form.experiments[Number(t.dataset.addOv)].overrides.push({ key: "DEPTH", value: "" });
+        renderExperiments();
+        refreshPayload();
+      } else if (t.dataset.removeOv != null) {
+        form = readForm();
+        const [i, j] = t.dataset.removeOv.split(":").map(Number);
+        form.experiments[i].overrides.splice(j, 1);
+        renderExperiments();
+        refreshPayload();
+      }
+    });
+    formEl.addEventListener("change", (ev) => {
+      if (ev.target.matches("[data-ov=key]")) {
+        const row = ev.target.closest(".override-row");
+        row.querySelector("[data-ov=value]").placeholder = `baseline ${placeholders[ev.target.value] || ""}`;
+      }
+      if (ev.target.name === "strategy") {
+        form = readForm();
+        app.querySelector("#sweep-fields").hidden = form.strategy !== "sweep";
+        app.querySelector("#agent-fields").hidden = form.strategy !== "agent";
+        app.querySelectorAll(".segmented label").forEach((label) => {
+          label.classList.toggle("on", label.querySelector("input").checked);
+        });
+        refreshPayload();
+      }
+    });
+    formEl.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      showErrors = true;
+      const mission = refreshPayload();
+      const result = app.querySelector("#result");
+      if (!mission) {
+        const built = missionFromForm(readForm());
+        const extra = Object.keys(built.errors).length ? [] : validate(schema, built.mission);
+        const all = Object.values(built.errors).concat(extra);
+        result.innerHTML = `<div class="error-box"><strong>Fix ${all.length} item${all.length === 1 ? "" : "s"}</strong><ul>${all.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>`;
+        return;
+      }
+      const btn = app.querySelector("#submit");
+      btn.disabled = true;
+      try {
+        const res = await sendCommand({ command: "start_mission", mission }, "start mission");
+        result.innerHTML = `<div class="ok-box">Command accepted (request <code>${esc(res.request_id || "")}</code>). It will show on the <a href="#/">overview</a> once the service picks it up.</div>`;
+      } catch {
+        /* toast already shown */
+      } finally {
+        btn.disabled = false;
+      }
+    });
+    app.querySelector("#copy-payload").addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(app.querySelector("#payload").textContent);
+        toast("Payload copied", "ok");
+      } catch {
+        toast("Copy failed; select the JSON and copy it manually", "bad");
+      }
+    });
+    const swap = (next) => {
+      form = next;
+      showErrors = false;
+      paint();
+    };
+    app.querySelector("#use-blank").addEventListener("click", () => swap(blankForm()));
+    app.querySelector("#use-agent").addEventListener("click", () => swap(agentTemplate()));
+    app.querySelector("#use-example").addEventListener("click", () => {
+      const example = (schema.examples || [])[0];
+      if (!example) return;
+      const next = formFromMission(example);
+      delete next.mission_id;
+      swap(next);
+    });
+  }
+
+  paint();
 }
 
 async function viewSchema() {
   setActiveNav("schema");
   const [mission, command] = await Promise.all([ensureSchema(), state.commandSchema || api.commandSchema().then((s) => (state.commandSchema = s))]);
-  const typeOf = (p, root) => {
-    if (!p) return "";
-    if (p.$ref) return p.$ref.split("/").pop();
-    if (p.anyOf) return p.anyOf.map((x) => typeOf(x, root)).join(" | ");
-    if (p.oneOf) return p.oneOf.map((x) => typeOf(x, root)).join(" | ");
-    if (p.const !== undefined) return `const ${JSON.stringify(p.const)}`;
-    if (p.enum) return p.enum.map((e) => JSON.stringify(e)).join(" | ");
-    if (p.type === "array") return `array<${typeOf(p.items, root) || "any"}>`;
-    if (p.type === "object" && p.additionalProperties && typeof p.additionalProperties === "object") return `map<string, ${typeOf(p.additionalProperties, root)}>`;
-    return Array.isArray(p.type) ? p.type.join(" | ") : p.type || "any";
-  };
-  const constraints = (p) => Object.entries(p).filter(([k]) => ["minimum", "maximum", "exclusiveMinimum", "minLength", "maxLength", "pattern", "minItems", "maxItems", "default"].includes(k)).map(([k, v]) => `${k}: ${JSON.stringify(v)}`).join(", ");
-  const table = (obj) => `<div class="table-wrap"><table class="schema-table"><thead><tr><th>Property</th><th>Type</th><th>Description</th><th>Constraints</th></tr></thead><tbody>${Object.entries(obj.properties || {}).map(([name, p]) => `<tr><td>${esc(name)}${(obj.required || []).includes(name) ? '<span class="req">required</span>' : ""}</td><td class="type">${esc(typeOf(p, mission))}</td><td>${esc(p.description || "")}</td><td class="muted mono">${esc(constraints(p))}</td></tr>`).join("")}</tbody></table></div>`;
-  const defs = (schema) => Object.entries(schema.$defs || {}).map(([name, d]) => `<div class="schema-def"><h3>${esc(name)}</h3>${d.description ? `<p class="hint">${esc(d.description.split("\n")[0])}</p>` : ""}${d.properties ? table(d) : `<pre class="log">${esc(JSON.stringify(d, null, 2))}</pre>`}</div>`).join("");
   const dl = (name, obj) => `<a class="btn btn-sm" download="${name}" href="data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(obj, null, 2))}">Download ${name}</a>`;
-
   app.innerHTML = `
-    <div class="page-head"><h1>Schema</h1><span class="muted">What this service accepts. Generated from the service's Pydantic models and published to the result store on start-up.</span></div>
-    <div class="section"><h2>${esc(mission.title)} <span class="muted mono" style="text-transform:none;letter-spacing:0">${esc(mission.$id || "")}</span></h2>
-      <p class="hint">${esc(mission.description || "")}</p>
-      <div class="btn-group" style="margin-bottom:10px">${dl("mission.schema.json", mission)}<a class="btn btn-sm" href="${esc(cfg.dataBaseUrl)}/schema/mission.schema.json" target="_blank" rel="noopener">Raw JSON</a></div>
-      ${table(mission)}
-      ${defs(mission)}
+    <div class="page-head">
+      <h1>Schema</h1>
+      <span class="muted">The contract this service accepts. Each field shows its type, whether you must set it, and an example you can copy into <a href="#/new">New mission</a>.</span>
     </div>
-    <div class="section"><h2>${esc(command.title)}</h2>
-      <p class="hint">${esc(command.description || "")} Any of the following, discriminated by <code>command</code>: ${(command.oneOf || []).map((o) => `<code>${esc(o.$ref.split("/").pop())}</code>`).join(", ")}.</p>
-      <div class="btn-group" style="margin-bottom:10px">${dl("command.schema.json", command)}<a class="btn btn-sm" href="${esc(cfg.dataBaseUrl)}/schema/command.schema.json" target="_blank" rel="noopener">Raw JSON</a></div>
-      ${defs(command)}
+    <div class="section">
+      <h2>${esc(mission.title || "Mission")} <span class="muted mono" style="text-transform:none;letter-spacing:0">${esc(mission.$id || "")}</span></h2>
+      <div class="btn-group" style="margin-bottom:12px">${dl("mission.schema.json", mission)}<a class="btn btn-sm" href="${esc(cfg.dataBaseUrl)}/schema/mission.schema.json" target="_blank" rel="noopener">Raw JSON</a><a class="btn btn-sm" href="#/new">Open the form</a></div>
+      ${missionDocHtml(mission, esc)}
     </div>
-    <div class="section"><h2>Example mission</h2><pre class="log">${esc(JSON.stringify((mission.examples || [])[0] || {}, null, 2))}</pre></div>`;
+    <div class="section">
+      <h2>${esc(command.title || "Command")}</h2>
+      <div class="btn-group" style="margin-bottom:12px">${dl("command.schema.json", command)}<a class="btn btn-sm" href="${esc(cfg.dataBaseUrl)}/schema/command.schema.json" target="_blank" rel="noopener">Raw JSON</a></div>
+      ${commandDocHtml(command, esc)}
+    </div>`;
 }
 
 // ---------------------------------------------------------------------------

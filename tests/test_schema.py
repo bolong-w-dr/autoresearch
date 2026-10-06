@@ -64,11 +64,17 @@ def test_json_schemas_are_well_formed():
     assert "strategy" in mission_schema["required"]
     assert mission_schema["examples"][0]["mission_id"] == "msn_example00001"
     assert "MATRIX_LR" in mission_schema["x-overridable-hyperparameters"]
+    assert mission_schema["x-hyperparameter-placeholders"]["MATRIX_LR"] == "0.04"
+    assert mission_schema["properties"]["tag"]["examples"] == ["oct6-lr"]
+    assert mission_schema["properties"]["name"]["examples"] == ["LR and batch-size sweep"]
 
     command_schema = command_json_schema()
     assert command_schema["title"] == "AutoresearchCommand"
     names = {ref["$ref"].rsplit("/", 1)[-1] for ref in command_schema["oneOf"]}
     assert {"StartMission", "PauseMission", "CancelMission", "Ping"} <= names
+    commands = {ex["command"] for ex in command_schema["examples"]}
+    assert {"start_mission", "pause_mission", "cancel_mission", "ping", "publish_schema"} <= commands
+    assert command_schema["examples"][0]["mission"]["tag"] == "oct6-lr"
     # Both documents must be JSON-serialisable as-is.
     json.dumps(mission_schema)
     json.dumps(command_schema)

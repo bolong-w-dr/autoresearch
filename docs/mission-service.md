@@ -154,11 +154,15 @@ step). Views:
   (kept, discarded, crashed, running-best frontier, baseline line), the
   experiment table with per-experiment deltas, overrides and crash logs, the
   event timeline, and Pause / Resume / Stop / Cancel / Clone actions.
-* **New mission** – JSON editor validated in the browser against the
-  published schema (the service validates again), with example and agent
-  templates. Submits a `start_mission` command.
-* **Schema** – the mission and command JSON Schema rendered as tables plus
-  raw download links.
+* **New mission** – a form prefilled with a working sweep (name, tag, one
+  experiment). Empty optional fields show placeholders, including the
+  `train.py` baseline next to every hyperparameter. A side panel shows the
+  schema entry for the focused field and the exact JSON that will be sent,
+  validated in the browser before submit. Example and agent templates too.
+* **Schema** – the mission and command schemas rendered as documentation:
+  each field with its description, required/optional, constraints and an
+  example, plus a copyable payload for every command. Raw JSON stays
+  downloadable.
 
 Runtime configuration lives in `dashboard/config.js` (`dataBaseUrl`,
 `apiBaseUrl`, `refreshSeconds`).
@@ -214,5 +218,6 @@ Then start the service on the GPU host with the `commands_queue_url` and
 ```bash
 uv run --extra service --group dev pytest          # service, runner (with a fake trainer), queues, store, devserver
 node --test infra/edge/auth.test.js                 # edge auth function
+node --test dashboard/lib/mission-form.test.js       # form prefill, placeholders, schema doc
 terraform -chdir=infra/terraform validate
 ```

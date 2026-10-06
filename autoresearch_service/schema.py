@@ -42,6 +42,26 @@ OVERRIDABLE_HYPERPARAMETERS = (
 
 OverrideValue = Union[int, float, str, bool, List[Union[int, float]]]
 
+# Baseline values from train.py, shown as placeholders in the dashboard form and
+# in the schema documentation so a mission author can see what they are changing.
+HYPERPARAMETER_PLACEHOLDERS = {
+    "ASPECT_RATIO": "64",
+    "HEAD_DIM": "128",
+    "WINDOW_PATTERN": "SSSL",
+    "TOTAL_BATCH_SIZE": "524288",
+    "EMBEDDING_LR": "0.6",
+    "UNEMBEDDING_LR": "0.004",
+    "MATRIX_LR": "0.04",
+    "SCALAR_LR": "0.5",
+    "WEIGHT_DECAY": "0.2",
+    "ADAM_BETAS": "0.8, 0.95",
+    "WARMUP_RATIO": "0.0",
+    "WARMDOWN_RATIO": "0.5",
+    "FINAL_LR_FRAC": "0.0",
+    "DEPTH": "8",
+    "DEVICE_BATCH_SIZE": "128",
+}
+
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -58,10 +78,17 @@ class StrictModel(BaseModel):
 class SweepExperiment(StrictModel):
     """One planned experiment: a description plus hyperparameter overrides."""
 
-    description: str = Field(..., min_length=1, max_length=200, description="Short human-readable summary of the change.")
+    description: str = Field(
+        ...,
+        min_length=1,
+        max_length=200,
+        description="Short human-readable summary of the change.",
+        examples=["increase MATRIX_LR to 0.05"],
+    )
     overrides: Dict[str, OverrideValue] = Field(
         default_factory=dict,
-        description="Hyperparameter constants in train.py to rewrite for this experiment, e.g. {\"MATRIX_LR\": 0.05}.",
+        description="Hyperparameter constants in train.py to rewrite for this experiment. Keys must be one of the overridable constants; values replace the assignment.",
+        examples=[{"MATRIX_LR": 0.05}],
     )
 
     @field_validator("overrides")
@@ -77,7 +104,12 @@ class SweepStrategy(StrictModel):
     """Run a fixed, ordered list of experiments. Kept changes accumulate."""
 
     type: Literal["sweep"] = "sweep"
-    experiments: List[SweepExperiment] = Field(..., min_length=1, description="Experiments to run in order after the baseline.")
+    experiments: List[SweepExperiment] = Field(
+        ...,
+        min_length=1,
+        description="Experiments to run in order after the baseline. The first experiment is always an untouched baseline, then these run in order; kept changes accumulate.",
+        examples=[[{"description": "increase MATRIX_LR to 0.05", "overrides": {"MATRIX_LR": 0.05}}]],
+    )
 
 
 class AgentStrategy(StrictModel):
@@ -94,16 +126,20 @@ class AgentStrategy(StrictModel):
         ...,
         min_length=1,
         description=(
-            "Agent command line. Placeholders: {prompt_file}, {description_file}, {worktree}. "
-            "Example: [\"claude\", \"-p\", \"@{prompt_file}\", \"--dangerously-skip-permissions\"]"
+            "Agent command line, one argument per entry. Placeholders substituted by the service: "
+            "{prompt_file} (instructions to read), {description_file} (write a one-line description here), {worktree}."
         ),
+        examples=[["claude", "-p", "Read the file {prompt_file} and follow its instructions."]],
     )
     instructions: str = Field(
         default="",
         max_length=20000,
         description="Extra instructions appended to program.md for the agent (research directions, constraints).",
+        examples=["Focus on the learning-rate schedule before changing the architecture."],
     )
-    timeout_minutes: int = Field(default=20, ge=1, le=240, description="Maximum wall time for a single agent invocation.")
+    timeout_minutes: int = Field(
+        default=20, ge=1, le=240, description="Maximum wall time for a single agent invocation.", examples=[20]
+    )
 
 
 Strategy = Annotated[Union[SweepStrategy, AgentStrategy], Field(discriminator="type")]
@@ -112,16 +148,26 @@ Strategy = Annotated[Union[SweepStrategy, AgentStrategy], Field(discriminator="t
 class KeepPolicy(StrictModel):
     """How the service decides whether an experiment 'advances' the branch."""
 
-    metric: Literal["val_bpb"] = Field(default="val_bpb", description="Metric to optimise. Only val_bpb is emitted by train.py today.")
-    direction: Literal["min", "max"] = Field(default="min", description="Whether lower or higher is better.")
-    min_improvement: float = Field(default=0.0, ge=0.0, description="Minimum absolute improvement over the current best to keep a change.")
-    max_memory_gb: Optional[float] = Field(default=None, gt=0, description="Discard experiments whose peak VRAM exceeds this many GB.")
+    metric: Literal["val_bpb"] = Field(default="val_bpb", description="Metric to optimise. Only val_bpb is emitted by train.py today.", examples=["val_bpb"])
+    direction: Literal["min", "max"] = Field(default="min", description="Whether lower or higher is better.", examples=["min"])
+    min_improvement: float = Field(
+        default=0.0, ge=0.0, description="Minimum absolute improvement over the current best required to keep a change. 0 keeps any improvement.", examples=[0.0]
+    )
+    max_memory_gb: Optional[float] = Field(
+        default=None, gt=0, description="Discard experiments whose peak VRAM exceeds this many GB. Leave empty for no limit.", examples=[48.0]
+    )
 
 
 class Budget(StrictModel):
-    max_experiments: int = Field(default=100, ge=1, le=10000, description="Stop after this many experiments (baseline included).")
-    max_duration_minutes: Optional[int] = Field(default=None, ge=5, description="Stop starting new experiments after this much wall time.")
-    experiment_timeout_minutes: int = Field(default=10, ge=1, le=120, description="Kill a single training run that exceeds this wall time.")
+    max_experiments: int = Field(
+        default=100, ge=1, le=10000, description="Stop after this many experiments, baseline included.", examples=[12]
+    )
+    max_duration_minutes: Optional[int] = Field(
+        default=None, ge=5, description="Stop starting new experiments after this much wall time. Leave empty for no limit.", examples=[480]
+    )
+    experiment_timeout_minutes: int = Field(
+        default=10, ge=1, le=120, description="Kill a single training run that exceeds this wall time and record it as a crash.", examples=[10]
+    )
 
 
 class Mission(StrictModel):
@@ -129,22 +175,39 @@ class Mission(StrictModel):
 
     model_config = ConfigDict(extra="forbid", title="AutoresearchMission")
 
-    schema_version: Literal["1"] = Field(default=SCHEMA_VERSION, description="Mission schema version.")
-    mission_id: str = Field(default_factory=lambda: new_id("msn"), pattern=r"^[A-Za-z0-9_\-]{3,64}$", description="Unique id. Generated if omitted.")
-    name: str = Field(..., min_length=1, max_length=120, description="Human-readable mission name shown in the dashboard.")
+    schema_version: Literal["1"] = Field(default=SCHEMA_VERSION, description="Mission schema version.", examples=["1"])
+    mission_id: str = Field(
+        default_factory=lambda: new_id("msn"),
+        pattern=r"^[A-Za-z0-9_\-]{3,64}$",
+        description="Unique id. Leave empty: the service generates one.",
+        examples=["msn_example00001"],
+    )
+    name: str = Field(
+        ..., min_length=1, max_length=120, description="Human-readable mission name shown in the dashboard.", examples=["LR and batch-size sweep"]
+    )
     tag: str = Field(
         ...,
         pattern=r"^[a-z0-9][a-z0-9\-]{0,40}$",
         description="Run tag. Work happens on branch autoresearch/<tag>; the branch must not already exist.",
+        examples=["oct6-lr"],
     )
-    objective: str = Field(default="Minimise val_bpb within the fixed 5-minute training budget.", max_length=2000)
-    base_ref: str = Field(default="master", min_length=1, max_length=120, description="Git ref to branch from.")
-    strategy: Strategy = Field(..., description="How experiments are proposed.")
-    keep_policy: KeepPolicy = Field(default_factory=KeepPolicy)
-    budget: Budget = Field(default_factory=Budget)
-    requested_by: Optional[str] = Field(default=None, max_length=200, description="Identity of the requester (filled from SSO by the dashboard).")
-    tags: List[str] = Field(default_factory=list, max_length=20, description="Free-form labels for filtering in the dashboard.")
-    metadata: Dict[str, Any] = Field(default_factory=dict, description="Opaque passthrough data stored with the mission.")
+    objective: str = Field(
+        default="Minimise val_bpb within the fixed 5-minute training budget.",
+        max_length=2000,
+        description="What this mission is trying to achieve. Included in the prompt when an agent proposes experiments.",
+        examples=["Minimise val_bpb within the fixed 5-minute training budget."],
+    )
+    base_ref: str = Field(default="master", min_length=1, max_length=120, description="Git ref to branch from.", examples=["master"])
+    strategy: Strategy = Field(..., description="How experiments are proposed: a fixed sweep, or an external coding agent.")
+    keep_policy: KeepPolicy = Field(default_factory=KeepPolicy, description="When a result is good enough to keep.")
+    budget: Budget = Field(default_factory=Budget, description="When to stop.")
+    requested_by: Optional[str] = Field(
+        default=None, max_length=200, description="Identity of the requester. Filled from SSO; leave empty in the form.", examples=["researcher@example.com"]
+    )
+    tags: List[str] = Field(
+        default_factory=list, max_length=20, description="Free-form labels for filtering in the dashboard.", examples=[["sweep", "overnight"]]
+    )
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Opaque passthrough data stored with the mission.", examples=[{}])
 
 
 # ---------------------------------------------------------------------------
@@ -225,6 +288,7 @@ def mission_json_schema() -> Dict[str, Any]:
     schema["$id"] = "https://autoresearch/schema/mission.schema.json"
     schema["description"] = "Autoresearch mission: declarative description of an autonomous research run."
     schema["x-overridable-hyperparameters"] = list(OVERRIDABLE_HYPERPARAMETERS)
+    schema["x-hyperparameter-placeholders"] = dict(HYPERPARAMETER_PLACEHOLDERS)
     schema["examples"] = [example_mission().model_dump(mode="json")]
     return schema
 
@@ -241,6 +305,16 @@ def command_json_schema() -> Dict[str, Any]:
         "$defs": schema.get("$defs", {}),
     }
     out.update({k: v for k, v in root_ref.items() if k != "title"})
+    example = example_mission().model_dump(mode="json")
+    out["examples"] = [
+        {"command": "start_mission", "issued_by": "researcher@example.com", "mission": example},
+        {"command": "pause_mission", "mission_id": example["mission_id"]},
+        {"command": "resume_mission", "mission_id": example["mission_id"]},
+        {"command": "stop_mission", "mission_id": example["mission_id"]},
+        {"command": "cancel_mission", "mission_id": example["mission_id"]},
+        {"command": "ping"},
+        {"command": "publish_schema"},
+    ]
     return out
 
 
