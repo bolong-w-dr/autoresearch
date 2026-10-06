@@ -58,6 +58,14 @@ program.md      — agent instructions
 pyproject.toml  — dependencies
 ```
 
+Optional, for running autoresearch as a service (see [docs/mission-service.md](docs/mission-service.md)):
+
+```
+autoresearch_service/   — queue-driven mission runner (SQS / Redis / local), publishes results to S3 or disk
+dashboard/              — static mission-control UI (history, progress charts, commands, mission schema)
+infra/                  — Terraform for S3 + CloudFront behind corporate SSO, SQS, API Gateway; Lambda@Edge auth
+```
+
 ## Design choices
 
 - **Single file to modify.** The agent only touches `train.py`. This keeps the scope manageable and diffs reviewable.
