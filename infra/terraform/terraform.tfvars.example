@@ -1,0 +1,25 @@
+name   = "autoresearch"
+region = "eu-west-1"
+
+# Dashboard hostname (CNAME -> cloudfront_domain_name output) and its us-east-1 certificate.
+domain_name         = "research.corp.example.com"
+acm_certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/00000000-0000-0000-0000-000000000000"
+
+# Corporate SSO. SAML example (Okta / Entra ID / Ping):
+idp_type          = "SAML"
+idp_name          = "CorporateSSO"
+saml_metadata_url = "https://login.example.com/app/abc123/sso/saml/metadata"
+
+# ...or OIDC:
+# idp_type           = "OIDC"
+# oidc_issuer        = "https://login.example.com/oauth2/default"
+# oidc_client_id     = "..."
+# oidc_client_secret = "..."
+
+cognito_domain_prefix = "autoresearch-sso-example" # must be globally unique
+allowed_email_domains = ["example.com"]
+allowed_groups        = [] # e.g. ["ml-platform"]
+session_hours         = 8
+
+# Principals allowed to assume the service role (in addition to EC2 instance profile use).
+service_principal_arns = []

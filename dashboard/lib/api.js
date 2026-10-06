@@ -6,7 +6,7 @@ const cfg = () => window.AUTORESEARCH_CONFIG || {};
 
 async function getJson(url, { optional = false } = {}) {
   const res = await fetch(url, { credentials: "same-origin", cache: "no-store" });
-  if (res.status === 401 || res.status === 403) {
+  if (res.status === 401) {
     // Session expired behind the SSO edge: reload so the edge function can redirect to the IdP.
     window.location.reload();
     throw new Error("not authenticated");

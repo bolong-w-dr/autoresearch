@@ -1,0 +1,11 @@
+{
+  "region": "eu-west-1",
+  "userPoolId": "eu-west-1_EXAMPLE",
+  "clientId": "example-client-id",
+  "clientSecret": "",
+  "cognitoDomain": "autoresearch-sso.auth.eu-west-1.amazoncognito.com",
+  "identityProvider": "CorporateSSO",
+  "allowedEmailDomains": ["example.com"],
+  "allowedGroups": [],
+  "sessionSeconds": 28800
+}

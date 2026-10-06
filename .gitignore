@@ -21,3 +21,17 @@ dev/
 
 # Results file
 results.tsv
+
+# Mission service local state (LocalDirQueue / LocalFileStore defaults)
+run.log
+.autoresearch/
+
+# Terraform
+infra/terraform/.terraform/
+infra/terraform/.build/
+infra/terraform/.terraform.lock.hcl
+infra/terraform/*.tfvars
+!infra/terraform/*.tfvars.example
+*.tfstate
+*.tfstate.*
+*.tfplan
