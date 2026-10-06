@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import mimetypes
+import os
 import threading
 from functools import partial
 from http import HTTPStatus
@@ -106,4 +107,11 @@ def serve_in_thread(server: ThreadingHTTPServer) -> threading.Thread:
 
 
 def default_dashboard_dir(repo_dir: Optional[Path] = None) -> Path:
-    return (repo_dir or Path(__file__).resolve().parent.parent) / "dashboard"
+    """Locate the static dashboard: explicit env override, else next to this package, else in the repo."""
+    override = os.environ.get("AUTORESEARCH_DASHBOARD_DIR")
+    if override:
+        return Path(override)
+    packaged = Path(__file__).resolve().parent.parent / "dashboard"
+    if packaged.is_dir() or repo_dir is None:
+        return packaged
+    return repo_dir / "dashboard"

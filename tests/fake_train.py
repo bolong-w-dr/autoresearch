@@ -6,6 +6,7 @@ prints a deterministic summary in the same format as the real script, so the
 runner's parsing and keep/discard logic can be exercised without a GPU.
 """
 
+import os
 import re
 import sys
 import time
@@ -34,6 +35,8 @@ def main() -> int:
         return 1
     if consts.get("WINDOW_PATTERN") == "HANG":
         time.sleep(3600)
+    # Optional artificial duration so a demo dashboard shows a mission in flight.
+    time.sleep(float(os.environ.get("FAKE_TRAIN_SLEEP", "0")))
     # Lower is better; a higher LR up to 0.05 helps, deeper helps a bit.
     val_bpb = 1.0 - min(lr, 0.05) * 2 - depth * 0.001
     print("step 00001 (0.0%) | loss: 4.0 | ...")

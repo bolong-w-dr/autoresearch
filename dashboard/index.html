@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>autoresearch · mission control</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧪</text></svg>" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/">
+      <span class="brand-mark"></span>
+      <span>autoresearch</span>
+      <span class="brand-sub">mission control</span>
+    </a>
+    <nav class="nav">
+      <a href="#/" data-route="overview">Overview</a>
+      <a href="#/new" data-route="new">New mission</a>
+      <a href="#/schema" data-route="schema">Schema</a>
+    </nav>
+    <div class="topbar-right">
+      <span id="service-pill" class="pill pill-muted" title="Service heartbeat">connecting…</span>
+      <span id="user-pill" class="pill pill-muted" title="Signed-in user"></span>
+      <a id="logout-link" class="link-muted" href="/auth/logout" hidden>Sign out</a>
+    </div>
+  </header>
+
+  <main id="app" class="app" aria-live="polite">
+    <div class="empty">Loading…</div>
+  </main>
+
+  <div id="toasts" class="toasts" aria-live="assertive"></div>
+
+  <script src="config.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 from abc import ABC, abstractmethod
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
@@ -30,10 +31,18 @@ MISSIONS_PREFIX = "missions/"
 SCHEMA_PREFIX = "schema/"
 
 
+def _json_default(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat().replace("+00:00", "Z")
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json")
+    return str(value)
+
+
 def _dump(obj: Any) -> str:
     if isinstance(obj, BaseModel):
         return obj.model_dump_json(indent=2)
-    return json.dumps(obj, indent=2, default=str)
+    return json.dumps(obj, indent=2, default=_json_default)
 
 
 class ResultStore(ABC):

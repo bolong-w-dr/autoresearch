@@ -181,6 +181,9 @@ def test_local_store_roundtrip(tmp_path):
     index = json.loads(store.read_text("index.json"))
     assert index["service"]["service_id"] == "svc"
     assert index["missions"][0]["mission_id"] == record.mission.mission_id
+    # Timestamps must be ISO 8601 (parseable by every browser's Date), not Python's str(datetime).
+    assert "T" in index["generated_at"] and index["generated_at"].endswith("Z")
+    assert "T" in index["missions"][0]["created_at"]
 
     store.publish_schemas()
     assert json.loads(store.read_text("schema/mission.schema.json"))["title"] == "AutoresearchMission"
